@@ -29,65 +29,55 @@ class CreateOrderService {
   ) {}
 
   public async execute({ customer_id, products }: IRequest): Promise<Order> {
-    const customerExists = await this.customersRepository.findById(customer_id);
+    // TODO
+    const customer = await this.customersRepository.findById(customer_id);
 
-    if (!customerExists) {
-      throw new AppError('Coud not find and customer');
+    if (!customer) {
+      throw new AppError('Customer not found');
     }
 
-    const productsExists = await this.productsRepository.findAllById(products);
-
-    if (!productsExists.length) {
-      throw new AppError('Coud not find and products');
-    }
-
-    const productsExistsIds = productsExists.map(product => product.id);
-
-    const checkInexistsProduct = products.filter(
-      product => !productsExistsIds.includes(product.id),
-    );
-
-    if (checkInexistsProduct.length) {
-      throw new AppError(
-        `Coud not find and products:${checkInexistsProduct[0].id}`,
-      );
-    }
-
-    const findProductsWhithNoQuantityAvaliable = products.filter(
-      product =>
-        productsExists.filter(prod => prod.id === product.id)[0].quantity <=
-        product.quantity,
-    );
-
-    if (findProductsWhithNoQuantityAvaliable) {
-      throw new AppError(
-        `The quantity ${findProductsWhithNoQuantityAvaliable[0].quantity} is not available from ${findProductsWhithNoQuantityAvaliable[0].id}`,
-      );
-    }
-
-    const seriarizedProducts = products.map(product => ({
-      product_id: product.id,
-      quantity: product.quantity,
-      price: productsExists.filter(p => p.id === product.id)[0].price,
-    }));
-
-    const order = await this.ordersRepository.create({
-      customer: customerExists,
-      products: seriarizedProducts,
+    const productsId = products.map(product => {
+      return { id: product.id };
     });
 
-    const { order_products } = order;
+    const productsInStockInfo = await this.productsRepository.findAllById(
+      productsId,
+    );
 
-    const ordersProductQuantity = order_products.map(product => ({
-      id: product.product_id,
-      quantity:
-        productsExists.filter(p => p.id === product.product_id)[0].quantity -
-        product.quantity,
-    }));
+    if (
+      !productsInStockInfo ||
+      productsInStockInfo.length !== productsId.length
+    ) {
+      throw new AppError('Invalid product id');
+    }
 
-    await this.productsRepository.updateQuantity(ordersProductQuantity);
+    const productsInOrder = products.map((product, index) => {
+      if (product.quantity > productsInStockInfo[index].quantity) {
+        throw new AppError('Not enought product in stock');
+      }
 
-    return order;
+      return {
+        product_id: product.id,
+        price: productsInStockInfo[index].price,
+        quantity: product.quantity,
+      };
+    });
+
+    const newOrder = await this.ordersRepository.create({
+      customer,
+      products: productsInOrder,
+    });
+
+    const productsInStockUpdated = products.map((product, index) => {
+      return {
+        id: product.id,
+        quantity: productsInStockInfo[index].quantity - product.quantity,
+      };
+    });
+
+    await this.productsRepository.updateQuantity(productsInStockUpdated);
+
+    return newOrder;
   }
 }
 
